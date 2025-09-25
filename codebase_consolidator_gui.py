@@ -258,8 +258,8 @@ class QueueWriter:
 class ConsolidatorGUI(tb.Window):
     def __init__(self):
         super().__init__(title="Codebase Consolidator", themename="solar")
-        self.geometry("900x650")
-        self.minsize(800, 550)
+        self.geometry("1280x200")
+        self.minsize(1280, 900)
 
         # state
         self._worker: Optional[threading.Thread] = None
