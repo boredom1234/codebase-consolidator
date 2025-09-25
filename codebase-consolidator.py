@@ -29,28 +29,280 @@ class CodebaseConsolidator:
                     if line and not line.startswith("#"):
                         patterns.add(line)
 
-        # Add common patterns to ignore
+        # Add comprehensive patterns to ignore common build artifacts, dependencies, and cache directories
         patterns.update(
             {
+                # Version control
                 ".git/*",
                 ".git/**",
+                ".svn/*",
+                ".svn/**",
+                ".hg/*",
+                ".hg/**",
+                ".bzr/*",
+                ".bzr/**",
+                
+                # Python
                 "__pycache__/*",
                 "__pycache__/**",
                 "*.pyc",
                 "*.pyo",
                 "*.pyd",
-                ".DS_Store",
-                "Thumbs.db",
-                "node_modules/*",
-                "node_modules/**",
-                ".env",
+                ".pytest_cache/*",
+                ".pytest_cache/**",
+                ".coverage",
+                ".tox/*",
+                ".tox/**",
+                "venv/*",
+                "venv/**",
                 ".venv/*",
                 ".venv/**",
-                "*.log",
-                "*.tmp",
+                "env/*",
+                "env/**",
+                ".env",
+                "ENV/*",
+                "ENV/**",
+                "env.bak/*",
+                "env.bak/**",
+                "venv.bak/*",
+                "venv.bak/**",
+                "pip-log.txt",
+                "pip-delete-this-directory.txt",
+                ".mypy_cache/*",
+                ".mypy_cache/**",
+                ".dmypy.json",
+                "dmypy.json",
+                
+                # Node.js / JavaScript / TypeScript
+                "node_modules/*",
+                "node_modules/**",
+                "npm-debug.log*",
+                "yarn-debug.log*",
+                "yarn-error.log*",
+                "lerna-debug.log*",
+                ".pnpm-debug.log*",
+                ".npm",
+                ".yarn/*",
+                ".yarn/**",
+                ".pnp",
+                ".pnp.js",
+                ".yarn/cache",
+                ".yarn/unplugged",
+                ".yarn/build-state.yml",
+                ".yarn/install-state.gz",
+                ".pnp.*",
+                
+                # Build outputs and dist directories
+                "dist/*",
+                "dist/**",
+                "build/*",
+                "build/**",
+                "out/*",
+                "out/**",
+                "target/*",
+                "target/**",
+                "bin/*",
+                "bin/**",
+                "obj/*",
+                "obj/**",
+                
+                # Next.js
                 ".next/*",
                 ".next/**",
                 ".next",
+                
+                # Nuxt.js
+                ".nuxt/*",
+                ".nuxt/**",
+                ".output/*",
+                ".output/**",
+                
+                # Vite
+                ".vite/*",
+                ".vite/**",
+                
+                # Webpack
+                ".webpack/*",
+                ".webpack/**",
+                
+                # Parcel
+                ".parcel-cache/*",
+                ".parcel-cache/**",
+                
+                # Rollup
+                ".rollup.cache/*",
+                ".rollup.cache/**",
+                
+                # SvelteKit
+                ".svelte-kit/*",
+                ".svelte-kit/**",
+                
+                # Gatsby
+                ".cache/*",
+                ".cache/**",
+                "public/*",
+                "public/**",
+                
+                # React Native
+                ".expo/*",
+                ".expo/**",
+                ".expo-shared/*",
+                ".expo-shared/**",
+                
+                # Flutter
+                ".dart_tool/*",
+                ".dart_tool/**",
+                ".flutter-plugins",
+                ".flutter-plugins-dependencies",
+                ".packages",
+                ".pub-cache/*",
+                ".pub-cache/**",
+                ".pub/*",
+                ".pub/**",
+                
+                # Java / Maven / Gradle
+                ".m2/*",
+                ".m2/**",
+                ".gradle/*",
+                ".gradle/**",
+                "gradle/*",
+                "gradle/**",
+                "gradlew",
+                "gradlew.bat",
+                
+                # .NET
+                "packages/*",
+                "packages/**",
+                "*.nupkg",
+                "*.snupkg",
+                ".vs/*",
+                ".vs/**",
+                
+                # Go
+                "vendor/*",
+                "vendor/**",
+                
+                # Rust
+                "target/*",
+                "target/**",
+                "Cargo.lock",
+                
+                # Ruby
+                ".bundle/*",
+                ".bundle/**",
+                "vendor/bundle/*",
+                "vendor/bundle/**",
+                
+                # PHP
+                "vendor/*",
+                "vendor/**",
+                "composer.phar",
+                
+                # IDEs and editors
+                ".vscode/*",
+                ".vscode/**",
+                ".idea/*",
+                ".idea/**",
+                "*.swp",
+                "*.swo",
+                "*~",
+                ".project",
+                ".classpath",
+                ".c9revisions/*",
+                ".c9revisions/**",
+                ".settings/*",
+                ".settings/**",
+                "*.sublime-project",
+                "*.sublime-workspace",
+                
+                # OS generated files
+                ".DS_Store",
+                ".DS_Store?",
+                "._*",
+                ".Spotlight-V100",
+                ".Trashes",
+                "ehthumbs.db",
+                "Thumbs.db",
+                "Desktop.ini",
+                
+                # Logs and temporary files
+                "*.log",
+                "*.tmp",
+                "*.temp",
+                "logs/*",
+                "logs/**",
+                "log/*",
+                "log/**",
+                "tmp/*",
+                "tmp/**",
+                "temp/*",
+                "temp/**",
+                
+                # Database files
+                "*.db",
+                "*.sqlite",
+                "*.sqlite3",
+                
+                # Coverage reports
+                "coverage/*",
+                "coverage/**",
+                ".nyc_output/*",
+                ".nyc_output/**",
+                "lcov.info",
+                
+                # Documentation builds
+                "_site/*",
+                "_site/**",
+                "site/*",
+                "site/**",
+                "docs/_build/*",
+                "docs/_build/**",
+                
+                # Backup files
+                "*.bak",
+                "*.backup",
+                "*.old",
+                
+                # Lock files (keep some, but exclude others)
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                
+                # Docker
+                ".dockerignore",
+                
+                # Terraform
+                ".terraform/*",
+                ".terraform/**",
+                "*.tfstate",
+                "*.tfstate.*",
+                ".terraform.lock.hcl",
+                
+                # Kubernetes
+                "*.kubeconfig",
+                
+                # Security and secrets
+                ".env.local",
+                ".env.development.local",
+                ".env.test.local",
+                ".env.production.local",
+                "*.pem",
+                "*.key",
+                "*.p12",
+                "*.p8",
+                "*.mobileprovision",
+                
+                # Miscellaneous
+                "*.pid",
+                "*.seed",
+                "*.pid.lock",
+                ".grunt",
+                "bower_components/*",
+                "bower_components/**",
+                ".lock-wscript",
+                ".wafpickle-*",
+                ".eslintcache",
+                ".stylelintcache",
             }
         )
 
@@ -59,19 +311,35 @@ class CodebaseConsolidator:
     def _is_ignored(self, file_path: Path) -> bool:
         """Check if file should be ignored based on .gitignore patterns"""
         relative_path = file_path.relative_to(self.root_path)
-        path_str = str(relative_path)
-
+        path_str = str(relative_path).replace("\\", "/")  # Normalize path separators
+        
         for pattern in self.ignored_patterns:
-            # Handle directory patterns
+            # Handle directory patterns ending with /
             if pattern.endswith("/"):
-                if any(part == pattern[:-1] for part in relative_path.parts):
+                dir_name = pattern[:-1]
+                if any(part == dir_name for part in relative_path.parts):
                     return True
-            # Handle glob patterns
-            elif fnmatch.fnmatch(path_str, pattern) or fnmatch.fnmatch(
-                file_path.name, pattern
-            ):
+            
+            # Handle patterns with /* or /** (directory contents)
+            elif pattern.endswith("/*") or pattern.endswith("/**"):
+                dir_pattern = pattern.split("/")[0]
+                if any(part == dir_pattern for part in relative_path.parts):
+                    return True
+            
+            # Handle exact directory matches (like node_modules, .vite, etc.)
+            elif "/" not in pattern and "*" not in pattern:
+                if any(part == pattern for part in relative_path.parts):
+                    return True
+            
+            # Handle glob patterns for filenames
+            elif fnmatch.fnmatch(file_path.name, pattern):
                 return True
-            # Handle ** patterns
+            
+            # Handle full path glob patterns
+            elif fnmatch.fnmatch(path_str, pattern):
+                return True
+            
+            # Handle ** patterns (recursive)
             elif "**" in pattern:
                 if fnmatch.fnmatch(path_str, pattern):
                     return True
