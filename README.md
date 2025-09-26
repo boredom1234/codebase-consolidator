@@ -2,7 +2,9 @@
 
 Transform sprawling codebases into NotebookLM-ready study packs. The project combines a CLI (`codebase-consolidator.py`) and a modern GUI (`codebase_consolidator_gui.py`) that distill source trees into richly annotated Markdown bundles tailor-made for [NotebookLM](https://notebooklm.google.com/) sessions.
 
-## Why NotebookLM Users Love It
+![image](https://raw.githubusercontent.com/boredom1234/codebase-consolidator/refs/heads/master/assets/screenshot.png)
+
+## Why This?
 
 - **Purpose-built pipeline**: Consolidate thousands of source files into conversational chunks that NotebookLM ingests without context loss.
 - **Curated metadata**: Every Markdown carries file sizes, timestamps, language tags, and optional line numbers to help NotebookLM anchor citations.
