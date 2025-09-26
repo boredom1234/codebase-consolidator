@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import os
 import queue
+import subprocess
 import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import ttkbootstrap as tb
 from ttkbootstrap.dialogs import Messagebox
@@ -268,7 +269,8 @@ class ConsolidatorGUI(tb.Window):
         self._stdout_backup = sys.stdout
         self._stderr_backup = sys.stderr
         self._last_output_path: Optional[Path] = None
-
+        self._tree_item_paths: dict[str, Path] = {}
+        self._preview_worker: Optional[threading.Thread] = None
         # build UI
         self._build_header()
         self._build_form()
@@ -490,6 +492,7 @@ class ConsolidatorGUI(tb.Window):
         tree_scroll_y.pack(side=RIGHT, fill=Y)
         tree_scroll_x.pack(side=BOTTOM, fill=X)
         self.file_tree.pack(side=LEFT, fill=BOTH, expand=YES)
+        self.file_tree.bind("<Double-1>", self._on_tree_item_double_click)
 
         # Log tab
         self.log_frame = tb.Frame(self.notebook)
@@ -559,70 +562,123 @@ class ConsolidatorGUI(tb.Window):
             )
             return
 
+        if self._preview_worker and self._preview_worker.is_alive():
+            Messagebox.show_info(
+                "A preview refresh is already running. Please wait.",
+                "Refresh In Progress",
+            )
+            return
+
+        self.refresh_btn.configure(state=DISABLED)
+        self.file_count_label.configure(text="Scanning codebase...")
+
+        self._preview_worker = threading.Thread(
+            target=self._run_preview_worker,
+            args=(codebase_path,),
+            daemon=True,
+        )
+        self._preview_worker.start()
+
+    def _run_preview_worker(self, codebase_path: Path):
         try:
-            # Clear existing tree
-            for item in self.file_tree.get_children():
-                self.file_tree.delete(item)
-
-            # Create a temporary consolidator to get file list
-            consolidator = CodebaseConsolidator(
-                str(codebase_path), 1
-            )  # Use 1 to get all files
+            consolidator = CodebaseConsolidator(str(codebase_path), 1)
             files = consolidator._collect_files()
-
-            # Build directory tree structure
-            dir_nodes = {}
-
+            file_data: List[Tuple[Path, int, str]] = []
             for file_path in files:
-                rel_path = file_path.relative_to(codebase_path)
-                parts = rel_path.parts
-
-                # Create directory nodes if they don't exist
-                current_path = ""
-                parent = ""
-
-                for i, part in enumerate(parts[:-1]):  # All parts except the filename
-                    current_path = (
-                        str(Path(current_path) / part) if current_path else part
-                    )
-
-                    if current_path not in dir_nodes:
-                        dir_nodes[current_path] = self.file_tree.insert(
-                            parent,
-                            "end",
-                            text=f"📁 {part}",
-                            values=("", "Directory"),
-                            open=True,
-                        )
-                    parent = dir_nodes[current_path]
-
-                # Add the file
-                file_size = consolidator._get_file_size(file_path)
-                file_type = consolidator._get_language_from_extension(file_path)
-
-                # Format file size
-                if file_size < 1024:
-                    size_str = f"{file_size} B"
-                elif file_size < 1024 * 1024:
-                    size_str = f"{file_size / 1024:.1f} KB"
-                else:
-                    size_str = f"{file_size / (1024 * 1024):.1f} MB"
-
-                self.file_tree.insert(
-                    parent,
-                    "end",
-                    text=f"📄 {parts[-1]}",
-                    values=(size_str, file_type),
-                )
-
-            # Update file count
-            self.file_count_label.configure(text=f"Found {len(files)} files to process")
-
-            # Switch to preview tab
-            self.notebook.select(self.preview_frame)
-
+                size = consolidator._get_file_size(file_path)
+                language = consolidator._get_language_from_extension(file_path)
+                file_data.append((file_path, size, language))
         except Exception as e:
-            Messagebox.show_error(f"Error scanning directory:\n{e}", "Preview Error")
+            self.after(0, lambda err=e: self._handle_preview_error(err))
+            return
+
+        self.after(
+            0,
+            lambda: self._populate_preview_tree(codebase_path, file_data),
+        )
+
+    def _handle_preview_error(self, error: Exception):
+        Messagebox.show_error(f"Error scanning directory:\n{error}", "Preview Error")
+        self.refresh_btn.configure(state=NORMAL)
+        self.file_count_label.configure(text="Preview unavailable")
+        self._preview_worker = None
+
+    def _populate_preview_tree(
+        self, codebase_path: Path, file_data: List[Tuple[Path, int, str]]
+    ):
+        # Clear existing tree
+        for item in self.file_tree.get_children():
+            self.file_tree.delete(item)
+        self._tree_item_paths.clear()
+
+        dir_nodes: dict[str, str] = {}
+
+        for file_path, file_size, file_type in file_data:
+            rel_path = file_path.relative_to(codebase_path)
+            parts = rel_path.parts
+
+            # Create directory nodes if they don't exist
+            current_path = ""
+            parent = ""
+
+            for part in parts[:-1]:
+                current_path = str(Path(current_path) / part) if current_path else part
+
+                if current_path not in dir_nodes:
+                    node_id = self.file_tree.insert(
+                        parent,
+                        "end",
+                        text=f"📁 {part}",
+                        values=("", "Directory"),
+                        open=True,
+                    )
+                    dir_nodes[current_path] = node_id
+                    node_path = codebase_path / Path(current_path)
+                    self._tree_item_paths[node_id] = node_path
+                parent = dir_nodes[current_path]
+
+            # Format file size string
+            if file_size < 1024:
+                size_str = f"{file_size} B"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.1f} KB"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.1f} MB"
+
+            item_id = self.file_tree.insert(
+                parent,
+                "end",
+                text=f"📄 {parts[-1]}",
+                values=(size_str, file_type),
+            )
+            self._tree_item_paths[item_id] = file_path
+
+        file_count = len(file_data)
+        self.file_count_label.configure(
+            text=f"Found {file_count} file{'s' if file_count != 1 else ''} to process"
+        )
+        self.notebook.select(self.preview_frame)
+        self.refresh_btn.configure(state=NORMAL)
+        self._preview_worker = None
+
+    def _on_tree_item_double_click(self, event):
+        item_id = self.file_tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        path = self._tree_item_paths.get(item_id)
+        if not path or not path.is_file():
+            return
+
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(path)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(path)], check=False)
+        except Exception as e:
+            Messagebox.show_error(f"Could not open file:\n{e}", "Open File Error")
 
     def _on_run(self):
         if self._worker and self._worker.is_alive():
