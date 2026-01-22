@@ -57,136 +57,66 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
         target_files: int = 50,
         syntax_theme: str = "github",
         line_numbers: bool = True,
+        use_xml: bool = False,
+        include_tree: bool = True,
+        max_part_size: int = 512000,
     ):
-        super().__init__(root_path, target_files)
+        super().__init__(
+            root_path,
+            target_files,
+            use_xml=use_xml,
+            include_tree=include_tree,
+            max_part_size=max_part_size,
+        )
         self.syntax_theme = syntax_theme
         self.line_numbers = line_numbers
 
-    def _format_code_block(self, content: str, language: str, file_path) -> str:
+    def _write_part_header(self, f, part_num: int, total_parts: int, file_count: int, all_files: List[Path] = None):
+        """Override to add GUI-specific metadata to the header"""
+        super()._write_part_header(f, part_num, total_parts, file_count, all_files)
+        f.write(f"**Syntax Theme:** {self.syntax_theme}  \n")
+        f.write(
+            f"**Line Numbers:** {'Enabled' if self.line_numbers else 'Disabled'}  \n"
+        )
+        f.write(f"**Format:** {'XML Tags' if self.use_xml else 'Markdown Code Blocks'}  \n\n")
+
+    def _format_code_block(self, content: str, language: str, file_path: Path) -> str:
         """Format code block with optional line numbers and syntax theme info."""
-        # Add syntax theme as a comment if it's not the default
+        # For RAG optimization: skip line numbers if using XML
+        effective_line_numbers = self.line_numbers and not self.use_xml
+
+        # Add syntax theme as a comment if it's not the default (only for markdown)
         theme_comment = ""
-        if self.syntax_theme != "github":
+        if self.syntax_theme != "github" and not self.use_xml:
             theme_comment = f"<!-- Syntax theme: {self.syntax_theme} -->\n"
 
         # Add line numbers if enabled
-        if self.line_numbers:
+        if effective_line_numbers:
             lines = content.split("\n")
+            # Handle case where split produces an empty string at the end if content ends with newline
+            if lines and not lines[-1]:
+                lines.pop()
+
             numbered_lines = []
             for i, line in enumerate(lines, 1):
                 numbered_lines.append(f"{i:4d} | {line}")
             content = "\n".join(numbered_lines)
 
-        return f"{theme_comment}```{language}\n{content}\n```"
+            # Re-add newline if it was there (to match original behavior mostly)
+            content += "\n"
 
-    def consolidate(self, output_base_dir: str = None, custom_folder_name: str = None):
-        """Override to use enhanced formatting."""
-        print(f"🔍 Scanning codebase in: {self.root_path.absolute()}")
-        print(f"🎨 Using syntax theme: {self.syntax_theme}")
-        print(f"🔢 Line numbers: {'enabled' if self.line_numbers else 'disabled'}")
+        if self.use_xml:
+            rel_path = file_path.relative_to(self.root_path).as_posix()
+            return f'<file path="{rel_path}" language="{language}">\n{content}</file>'
 
-        # Collect files
-        files = self._collect_files()
-        print(f"📁 Found {len(files)} files to process")
+        return f"{theme_comment}```{language}\n{content}```"
 
-        if not files:
-            print("❌ No files found to process!")
-            return
-
-        # Generate output folder name
-        folder_name = self._generate_output_folder_name(custom_folder_name)
-
-        # Determine output directory
-        if output_base_dir:
-            output_path = Path(output_base_dir) / folder_name
-        else:
-            output_path = Path.cwd() / folder_name
-
-        # Create output directory
-        output_path.mkdir(parents=True, exist_ok=True)
-        print(f"📂 Output directory: {output_path.absolute()}")
-
-        # Distribute files
-        file_buckets = self._distribute_files(files)
-        actual_files = len(file_buckets)
-
-        print(f"📝 Creating {actual_files} consolidated markdown files...")
-
-        # Generate consolidated files with enhanced formatting
-        for i, bucket in enumerate(file_buckets):
-            output_file = output_path / f"codebase_part_{i + 1:03d}.md"
-
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(f"# Codebase Part {i + 1} of {actual_files}\n\n")
-                f.write(f"**Source:** `{self.root_path.absolute()}`  \n")
-                f.write(
-                    f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
-                )
-                f.write(f"**Files in this part:** {len(bucket)}  \n")
-                f.write(f"**Syntax Theme:** {self.syntax_theme}  \n")
-                f.write(
-                    f"**Line Numbers:** {'Enabled' if self.line_numbers else 'Disabled'}  \n\n"
-                )
-                f.write("## Table of Contents\n\n")
-
-                # Write table of contents
-                for j, file_path in enumerate(bucket):
-                    rel_path = file_path.relative_to(self.root_path)
-                    anchor = (
-                        rel_path.as_posix()
-                        .replace("/", "-")
-                        .replace(".", "-")
-                        .replace("_", "-")
-                        .lower()
-                    )
-                    f.write(f"{j + 1}. [{rel_path}](#{anchor})\n")
-
-                f.write("\n---\n\n")
-
-                # Write file contents with enhanced formatting
-                for file_path in bucket:
-                    rel_path = file_path.relative_to(self.root_path)
-                    content = self._read_file_content(file_path)
-                    language = self._get_language_from_extension(file_path)
-                    anchor = (
-                        rel_path.as_posix()
-                        .replace("/", "-")
-                        .replace(".", "-")
-                        .replace("_", "-")
-                        .lower()
-                    )
-
-                    f.write(f"## {rel_path} {{#{anchor}}}\n\n")
-                    f.write(f"**File Path:** `{rel_path}`  \n")
-                    f.write(
-                        f"**File Size:** {self._get_file_size(file_path)} bytes  \n"
-                    )
-                    f.write(f"**Language:** {language}  \n")
-                    f.write(
-                        f"**Last Modified:** {datetime.fromtimestamp(file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    )
-
-                    # Use enhanced formatting
-                    formatted_code = self._format_code_block(
-                        content, language, file_path
-                    )
-                    f.write(formatted_code)
-                    f.write("\n\n---\n\n")
-
-            print(f"   ✅ Created: codebase_part_{i + 1:03d}.md ({len(bucket)} files)")
-
-        # Create enhanced index file
-        self._create_enhanced_index(output_path, files, file_buckets, actual_files)
-
-        print("\n🎉 Consolidation complete!")
-        print(f"📂 Output directory: {output_path.absolute()}")
-        print(f"📊 Summary: {len(files)} files → {actual_files} markdown files")
-
-        return output_path.absolute()
-
-    def _create_enhanced_index(self, output_path, files, file_buckets, actual_files):
-        """Create an enhanced index file with formatting info."""
-        from datetime import datetime
+    def _create_index(self, output_path: Path, files: List[Path], file_buckets: List[List[Path]], actual_files: int):
+        """Override to add formatting options to the index file"""
+        # Call the parent implementation to generate the base file, but we'll overwrite it
+        # because the parent writes the whole file at once.
+        # Actually, since the parent writes the WHOLE file, calling super() just to overwrite it is wasteful.
+        # We'll reimplement it with the extra section.
 
         index_file = output_path / "README.md"
         with open(index_file, "w", encoding="utf-8") as f:
@@ -200,13 +130,19 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
             f.write(f"**Actual Output Files:** {actual_files}  \n")
             f.write(f"**Syntax Theme:** {self.syntax_theme}  \n")
             f.write(
-                f"**Line Numbers:** {'Enabled' if self.line_numbers else 'Disabled'}  \n\n"
+                f"**Line Numbers:** {'Enabled' if self.line_numbers else 'Disabled'}  \n"
             )
+            f.write(f"**XML Format:** {'Yes' if self.use_xml else 'No'}  \n")
+            f.write(f"**File Tree:** {'Included' if self.include_tree else 'Excluded'}  \n\n")
 
             f.write("## 🎨 Formatting Options\n\n")
             f.write(f"- **Syntax Highlighting Theme:** `{self.syntax_theme}`\n")
             f.write(
-                f"- **Line Numbers:** {'✅ Enabled' if self.line_numbers else '❌ Disabled'}\n\n"
+                f"- **Line Numbers:** {'✅ Enabled' if self.line_numbers else '❌ Disabled'}\n"
+            )
+            f.write(f"- **XML Tags:** {'✅ Enabled' if self.use_xml else '❌ Disabled'}\n")
+            f.write(
+                f"- **File Tree:** {'✅ Included' if self.include_tree else '❌ Excluded'}\n\n"
             )
 
             f.write("## 📋 File Structure\n\n")
@@ -239,6 +175,8 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
             f.write(
                 "- **Metadata** for each file including size and modification date\n\n"
             )
+
+        return index_file
 
 
 class QueueWriter:
@@ -378,6 +316,18 @@ class ConsolidatorGUI(tb.Window):
         )
         self.num_files_spin.pack(side=LEFT)
 
+        # Max Part Size (KB)
+        tb.Label(row3, text="Max Part Size (KB):", width=20).pack(side=LEFT, padx=(20, 0))
+        self.max_size_var = tb.IntVar(value=500)
+        self.max_size_spin = tb.Spinbox(
+            row3,
+            from_=10,
+            to=10000,
+            textvariable=self.max_size_var,
+            width=10,
+        )
+        self.max_size_spin.pack(side=LEFT)
+
         # Custom folder name
         row4 = tb.Frame(frm)
         row4.pack(fill=X, pady=5)
@@ -437,6 +387,24 @@ class ConsolidatorGUI(tb.Window):
             variable=self.line_numbers_var,
             bootstyle="round-toggle",
         ).pack(side=LEFT)
+
+        # XML Tags toggle
+        self.xml_var = tb.BooleanVar(value=False)
+        tb.Checkbutton(
+            row2,
+            text="Use XML Tags (Better for RAG)",
+            variable=self.xml_var,
+            bootstyle="round-toggle",
+        ).pack(side=LEFT, padx=(20, 0))
+
+        # File Tree toggle
+        self.tree_var = tb.BooleanVar(value=True)
+        tb.Checkbutton(
+            row2,
+            text="Include File Tree",
+            variable=self.tree_var,
+            bootstyle="round-toggle",
+        ).pack(side=LEFT, padx=(20, 0))
 
     def _build_main_content(self) -> None:
         # Create a notebook (tabbed interface) for preview and log
@@ -720,6 +688,7 @@ class ConsolidatorGUI(tb.Window):
                 return
 
         folder_name = self.folder_var.get().strip() or None
+        max_size = self.max_size_var.get() * 1024  # Convert KB to bytes
 
         # Prepare run
         self._stop_flag.clear()
@@ -732,6 +701,8 @@ class ConsolidatorGUI(tb.Window):
         # Get formatting options
         syntax_theme = self.syntax_theme_var.get()
         line_numbers = self.line_numbers_var.get()
+        use_xml = self.xml_var.get()
+        include_tree = self.tree_var.get()
 
         # Switch to log tab
         self.notebook.select(self.log_frame)
@@ -745,6 +716,9 @@ class ConsolidatorGUI(tb.Window):
             self.verbose_var.get(),
             syntax_theme,
             line_numbers,
+            use_xml,
+            include_tree,
+            max_size,
         )
         self._worker = threading.Thread(target=self._run_worker, args=args, daemon=True)
         self._worker.start()
@@ -764,9 +738,9 @@ class ConsolidatorGUI(tb.Window):
             if sys.platform.startswith("win"):
                 os.startfile(path)  # type: ignore[attr-defined]
             elif sys.platform == "darwin":
-                os.system(f"open '{path}'")
+                subprocess.run(["open", path], check=False)
             else:
-                os.system(f"xdg-open '{path}'")
+                subprocess.run(["xdg-open", path], check=False)
         except Exception as e:
             Messagebox.show_error(f"Could not open folder:\n{e}", "Open Error")
 
@@ -780,6 +754,9 @@ class ConsolidatorGUI(tb.Window):
         verbose: bool,
         syntax_theme: str,
         line_numbers: bool,
+        use_xml: bool,
+        include_tree: bool,
+        max_size: int,
     ):
         # Redirect stdout/stderr to GUI queue
         qwriter = QueueWriter(self._log_queue)
@@ -789,18 +766,24 @@ class ConsolidatorGUI(tb.Window):
         try:
             print("🚀 Codebase Consolidator GUI")
             print("=" * 50)
+            print(f"🎨 Using syntax theme: {syntax_theme}")
+            print(f"🔢 Line numbers: {'enabled' if line_numbers else 'disabled'}")
+            print(f"🏷️ XML Output: {'enabled' if use_xml else 'disabled'}")
+            print(f"🌳 File Tree: {'enabled' if include_tree else 'disabled'}")
+            print(f"📏 Max Part Size: {max_size / 1024:.1f} KB")
 
             consolidator = EnhancedCodebaseConsolidator(
-                codebase_path, n_files, syntax_theme, line_numbers
+                codebase_path,
+                n_files,
+                syntax_theme,
+                line_numbers,
+                use_xml=use_xml,
+                include_tree=include_tree,
+                max_part_size=max_size,
             )
             result = consolidator.consolidate(output_dir, folder_name)
 
             self._last_output_path = Path(result) if result else None
-
-            print("\n" + "=" * 50)
-            print("✨ Success! Your codebase has been consolidated.")
-            if self._last_output_path:
-                print(f"📁 Output: {self._last_output_path}")
 
         except KeyboardInterrupt:
             print("\n❌ Operation cancelled by user")
