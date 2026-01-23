@@ -14,23 +14,23 @@ from datetime import datetime
 class CodebaseConsolidator:
     def __init__(
         self,
-        root_path: str,
+        root_paths: List[str],
         target_files: int = 50,
         use_xml: bool = False,
         include_tree: bool = True,
         max_part_size: int = 512000,  # Default 500KB
     ):
-        self.root_path = Path(root_path)
+        self.root_paths = [Path(p).resolve() for p in root_paths]
         self.target_files = target_files
         self.use_xml = use_xml
         self.include_tree = include_tree
         self.max_part_size = max_part_size
-        self.ignored_patterns = self._load_gitignore()
+        self.gitignore_rules = {path: self._load_gitignore(path) for path in self.root_paths}
 
-    def _load_gitignore(self) -> Set[str]:
-        """Load patterns from .gitignore file"""
+    def _load_gitignore(self, root_path: Path) -> Set[str]:
+        """Load patterns from .gitignore file for a specific root"""
         patterns = set()
-        gitignore_path = self.root_path / ".gitignore"
+        gitignore_path = root_path / ".gitignore"
 
         if gitignore_path.exists():
             with open(gitignore_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -318,12 +318,26 @@ class CodebaseConsolidator:
 
         return patterns
 
-    def _is_ignored(self, file_path: Path) -> bool:
+    def _get_rel_path_with_root(self, file_path: Path) -> Path:
+        """Get relative path prefixed with the root directory name"""
+        for root in self.root_paths:
+            try:
+                rel_path = file_path.relative_to(root)
+                return Path(root.name) / rel_path
+            except ValueError:
+                continue
+        return file_path
+
+    def _is_ignored(self, file_path: Path, root_path: Path) -> bool:
         """Check if file should be ignored based on .gitignore patterns"""
-        relative_path = file_path.relative_to(self.root_path)
+        try:
+            relative_path = file_path.relative_to(root_path)
+        except ValueError:
+            return True
+
         path_str = str(relative_path).replace("\\", "/")  # Normalize path separators
 
-        for pattern in self.ignored_patterns:
+        for pattern in self.gitignore_rules.get(root_path, set()):
             # Handle directory patterns ending with /
             if pattern.endswith("/"):
                 dir_name = pattern[:-1]
@@ -436,14 +450,16 @@ class CodebaseConsolidator:
             return False
 
     def _generate_file_tree(self, files: List[Path]) -> str:
-        """Generate a visual tree structure of the files"""
+        """Generate a visual tree structure of the files from multiple roots"""
         if not files:
             return ""
 
         # Build a nested dictionary structure
         tree = {}
         for file_path in files:
-            parts = file_path.relative_to(self.root_path).parts
+            # Use prefixed path so different roots don't collide at the top level
+            prefixed_path = self._get_rel_path_with_root(file_path)
+            parts = prefixed_path.parts
             current = tree
             for part in parts:
                 if part not in current:
@@ -469,13 +485,14 @@ class CodebaseConsolidator:
         return "\n".join(["."] + render_tree(tree))
 
     def _collect_files(self) -> List[Path]:
-        """Collect all text files that should be processed"""
+        """Collect all text files that should be processed from all root paths"""
         files = []
 
-        for file_path in self.root_path.rglob("*"):
-            if file_path.is_file() and not self._is_ignored(file_path):
-                if self._is_text_file(file_path):
-                    files.append(file_path)
+        for root in self.root_paths:
+            for file_path in root.rglob("*"):
+                if file_path.is_file() and not self._is_ignored(file_path, root):
+                    if self._is_text_file(file_path):
+                        files.append(file_path)
 
         return sorted(files)
 
@@ -599,10 +616,13 @@ class CodebaseConsolidator:
         if custom_name:
             return custom_name
 
-        # Get the codebase folder name
-        codebase_name = self.root_path.name
-        if codebase_name == "." or codebase_name == "":
-            codebase_name = Path.cwd().name
+        # Get the first codebase folder name or 'multi_codebase'
+        if len(self.root_paths) == 1:
+            codebase_name = self.root_paths[0].name
+            if codebase_name == "." or codebase_name == "":
+                codebase_name = Path.cwd().name
+        else:
+            codebase_name = "multi_codebase"
 
         # Add timestamp and file count
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -623,7 +643,8 @@ class CodebaseConsolidator:
     def _write_part_header(self, f, part_num: int, total_parts: int, file_count: int, all_files: List[Path] = None):
         """Write the header for a part file"""
         f.write(f"# Codebase Part {part_num} of {total_parts}\n\n")
-        f.write(f"**Source:** `{self.root_path.absolute()}`  \n")
+        sources = ", ".join([f"`{p.absolute()}`" for p in self.root_paths])
+        f.write(f"**Sources:** {sources}  \n")
         f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
         f.write(f"**Files in this part:** {file_count}  \n\n")
 
@@ -637,7 +658,7 @@ class CodebaseConsolidator:
         """Write the Table of Contents"""
         f.write("## Table of Contents\n\n")
         for j, file_path in enumerate(bucket):
-            rel_path = file_path.relative_to(self.root_path)
+            rel_path = self._get_rel_path_with_root(file_path)
             anchor = (
                 rel_path.as_posix()
                 .replace("/", "-")
@@ -653,15 +674,15 @@ class CodebaseConsolidator:
         if not content.endswith("\n"):
             content += "\n"
 
+        rel_path = self._get_rel_path_with_root(file_path).as_posix()
         if self.use_xml:
-            rel_path = file_path.relative_to(self.root_path).as_posix()
             return f'<file path="{rel_path}" language="{language}">\n{content}</file>'
 
-        return f"```{language}\n{content}```"
+        return f"```{language}\n# File: {rel_path}\n{content}```"
 
     def _write_file_section(self, f, file_path: Path):
         """Write a single file's content and metadata"""
-        rel_path = file_path.relative_to(self.root_path)
+        rel_path = self._get_rel_path_with_root(file_path)
         content = self._read_file_content(file_path)
         language = self._get_language_from_extension(file_path)
         anchor = (
@@ -708,8 +729,10 @@ class CodebaseConsolidator:
         index_file = output_path / "README.md"
         with open(index_file, "w", encoding="utf-8") as f:
             f.write("# 📚 Consolidated Codebase\n\n")
-            f.write(f"**Source Directory:** `{self.root_path.absolute()}`  \n")
-            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+            f.write("**Source Directories:**  \n")
+            for p in self.root_paths:
+                f.write(f"- `{p.absolute()}`  \n")
+            f.write(f"\n**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
             f.write(f"**Total Files Processed:** {len(files)}  \n")
             f.write(f"**Target Output Files:** {self.target_files}  \n")
             f.write(f"**Actual Output Files:** {actual_files}  \n\n")
@@ -720,7 +743,7 @@ class CodebaseConsolidator:
 
             for i, bucket in enumerate(file_buckets):
                 file_list = ", ".join(
-                    [f"`{f.relative_to(self.root_path)}`" for f in bucket[:3]]
+                    [f"`{self._get_rel_path_with_root(f)}`" for f in bucket[:3]]
                 )
                 if len(bucket) > 3:
                     file_list += f" and {len(bucket) - 3} more..."
@@ -732,13 +755,16 @@ class CodebaseConsolidator:
             f.write(f"This consolidated codebase was generated using the Codebase Consolidator tool.\n")
             f.write(f"Each markdown file contains multiple source files with syntax highlighting and metadata.\n\n")
             f.write(f"**Command used:**\n```bash\n")
-            f.write(f"codebase-consolidator {self.root_path.absolute()} -n {self.target_files}\n```\n")
+            paths_str = " ".join([str(p.absolute()) for p in self.root_paths])
+            f.write(f"codebase-consolidator {paths_str} -n {self.target_files}\n```\n")
 
         return index_file
 
     def consolidate(self, output_base_dir: str = None, custom_folder_name: str = None):
         """Main method to consolidate the codebase"""
-        print(f"Scanning codebase in: {self.root_path.absolute()}")
+        print(f"Scanning {len(self.root_paths)} codebases...")
+        for root in self.root_paths:
+            print(f" - {root.absolute()}")
 
         # Collect files
         files = self._collect_files()
@@ -791,7 +817,7 @@ The tool will create a timestamped folder with descriptive naming like:
     )
 
     parser.add_argument(
-        "codebase_path", help="Path to the codebase directory to consolidate"
+        "codebase_paths", nargs="+", help="One or more paths to the codebase directories to consolidate"
     )
     parser.add_argument(
         "-n",
@@ -844,14 +870,16 @@ The tool will create a timestamped folder with descriptive naming like:
         print("❌ Error: Number of files must be positive")
         sys.exit(1)
 
-    codebase_path = Path(args.codebase_path).expanduser().resolve()
-    if not codebase_path.exists():
-        print(f"❌ Error: Path '{codebase_path}' does not exist")
-        sys.exit(1)
-
-    if not codebase_path.is_dir():
-        print(f"❌ Error: Path '{codebase_path}' is not a directory")
-        sys.exit(1)
+    codebase_paths = []
+    for path_str in args.codebase_paths:
+        p = Path(path_str).expanduser().resolve()
+        if not p.exists():
+            print(f"❌ Error: Path '{p}' does not exist")
+            sys.exit(1)
+        if not p.is_dir():
+            print(f"❌ Error: Path '{p}' is not a directory")
+            sys.exit(1)
+        codebase_paths.append(str(p))
 
     # Validate output directory if provided
     if args.output_dir:
@@ -872,7 +900,7 @@ The tool will create a timestamped folder with descriptive naming like:
     try:
         # Create consolidator and run
         consolidator = CodebaseConsolidator(
-            str(codebase_path),
+            codebase_paths,
             args.num_files,
             use_xml=args.xml,
             include_tree=not args.no_tree,

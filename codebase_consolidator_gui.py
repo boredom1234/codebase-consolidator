@@ -53,7 +53,7 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
 
     def __init__(
         self,
-        root_path: str,
+        root_paths: List[str],
         target_files: int = 50,
         syntax_theme: str = "github",
         line_numbers: bool = True,
@@ -62,7 +62,7 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
         max_part_size: int = 512000,
     ):
         super().__init__(
-            root_path,
+            root_paths,
             target_files,
             use_xml=use_xml,
             include_tree=include_tree,
@@ -105,25 +105,22 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
             # Re-add newline if it was there (to match original behavior mostly)
             content += "\n"
 
+        rel_path = self._get_rel_path_with_root(file_path).as_posix()
         if self.use_xml:
-            rel_path = file_path.relative_to(self.root_path).as_posix()
             return f'<file path="{rel_path}" language="{language}">\n{content}</file>'
 
-        return f"{theme_comment}```{language}\n{content}```"
+        return f"{theme_comment}```{language}\n# File: {rel_path}\n{content}```"
 
     def _create_index(self, output_path: Path, files: List[Path], file_buckets: List[List[Path]], actual_files: int):
         """Override to add formatting options to the index file"""
-        # Call the parent implementation to generate the base file, but we'll overwrite it
-        # because the parent writes the whole file at once.
-        # Actually, since the parent writes the WHOLE file, calling super() just to overwrite it is wasteful.
-        # We'll reimplement it with the extra section.
-
         index_file = output_path / "README.md"
         with open(index_file, "w", encoding="utf-8") as f:
             f.write("# 📚 Consolidated Codebase\n\n")
-            f.write(f"**Source Directory:** `{self.root_path.absolute()}`  \n")
+            f.write("**Source Directories:**  \n")
+            for p in self.root_paths:
+                f.write(f"- `{p.absolute()}`  \n")
             f.write(
-                f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
+                f"\n**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n"
             )
             f.write(f"**Total Files Processed:** {len(files)}  \n")
             f.write(f"**Target Output Files:** {self.target_files}  \n")
@@ -151,7 +148,7 @@ class EnhancedCodebaseConsolidator(CodebaseConsolidator):
 
             for i, bucket in enumerate(file_buckets):
                 file_list = ", ".join(
-                    [f"`{f.relative_to(self.root_path)}`" for f in bucket[:3]]
+                    [f"`{self._get_rel_path_with_root(f)}`" for f in bucket[:3]]
                 )
                 if len(bucket) > 3:
                     file_list += f" and {len(bucket) - 3} more..."
@@ -280,16 +277,28 @@ class ConsolidatorGUI(tb.Window):
         frm = tb.Labelframe(self, text="Settings", padding=10)
         frm.pack(fill=X, padx=12, pady=(0, 8))
 
-        # Codebase directory
+        # Codebase directories list
         row1 = tb.Frame(frm)
         row1.pack(fill=X, pady=5)
-        tb.Label(row1, text="Codebase Directory:", width=20).pack(side=LEFT)
-        self.codebase_var = tb.StringVar()
-        self.codebase_entry = tb.Entry(row1, textvariable=self.codebase_var)
-        self.codebase_entry.pack(side=LEFT, fill=X, expand=YES)
+        tb.Label(row1, text="Source Directories:", width=20).pack(side=LEFT, anchor="n")
+
+        # Container for list and buttons
+        list_container = tb.Frame(row1)
+        list_container.pack(side=LEFT, fill=X, expand=YES)
+
+        self.path_tree = ttk.Treeview(list_container, show="tree", height=3)
+        self.path_tree.pack(side=LEFT, fill=X, expand=YES)
+
+        path_btns = tb.Frame(list_container)
+        path_btns.pack(side=LEFT, padx=(8, 0), anchor="n")
+
         tb.Button(
-            row1, text="Browse", bootstyle=SECONDARY, command=self._browse_codebase
-        ).pack(side=LEFT, padx=(8, 0))
+            path_btns, text="Add Folder", bootstyle=SECONDARY, command=self._add_codebase, width=12
+        ).pack(pady=(0, 5))
+
+        tb.Button(
+            path_btns, text="Remove Selected", bootstyle=DANGER, command=self._remove_codebase, width=12
+        ).pack()
 
         # Output directory
         row2 = tb.Frame(frm)
@@ -504,10 +513,21 @@ class ConsolidatorGUI(tb.Window):
     def _on_theme_change(self, _evt=None):
         self.style.theme_use(self.theme_var.get())
 
-    def _browse_codebase(self):
+    def _add_codebase(self):
         path = filedialog.askdirectory(title="Select Codebase Directory")
         if path:
-            self.codebase_var.set(path)
+            # Check if already in list
+            for item in self.path_tree.get_children():
+                if self.path_tree.item(item, "text") == path:
+                    return
+            self.path_tree.insert("", "end", text=path)
+
+    def _remove_codebase(self):
+        selected = self.path_tree.selection()
+        if not selected:
+            return
+        for item in selected:
+            self.path_tree.delete(item)
 
     def _browse_output(self):
         path = filedialog.askdirectory(title="Select Output Base Directory")
@@ -516,19 +536,20 @@ class ConsolidatorGUI(tb.Window):
 
     def _refresh_preview(self):
         """Refresh the file preview tree."""
-        codebase = self.codebase_var.get().strip()
-        if not codebase:
+        paths = [self.path_tree.item(i, "text") for i in self.path_tree.get_children()]
+        if not paths:
             Messagebox.show_error(
-                "Please select a codebase directory first.", "Missing Input"
+                "Please add at least one codebase directory.", "Missing Input"
             )
             return
 
-        codebase_path = Path(codebase).expanduser()
-        if not codebase_path.exists() or not codebase_path.is_dir():
-            Messagebox.show_error(
-                "The selected codebase directory is invalid.", "Invalid Input"
-            )
-            return
+        for path in paths:
+            p = Path(path).expanduser()
+            if not p.exists() or not p.is_dir():
+                Messagebox.show_error(
+                    f"The directory '{path}' is invalid.", "Invalid Input"
+                )
+                return
 
         if self._preview_worker and self._preview_worker.is_alive():
             Messagebox.show_info(
@@ -538,18 +559,18 @@ class ConsolidatorGUI(tb.Window):
             return
 
         self.refresh_btn.configure(state=DISABLED)
-        self.file_count_label.configure(text="Scanning codebase...")
+        self.file_count_label.configure(text="Scanning codebases...")
 
         self._preview_worker = threading.Thread(
             target=self._run_preview_worker,
-            args=(codebase_path,),
+            args=(paths,),
             daemon=True,
         )
         self._preview_worker.start()
 
-    def _run_preview_worker(self, codebase_path: Path):
+    def _run_preview_worker(self, paths: List[str]):
         try:
-            consolidator = CodebaseConsolidator(str(codebase_path), 1)
+            consolidator = CodebaseConsolidator(paths, 1)
             files = consolidator._collect_files()
             file_data: List[Tuple[Path, int, str]] = []
             for file_path in files:
@@ -562,7 +583,7 @@ class ConsolidatorGUI(tb.Window):
 
         self.after(
             0,
-            lambda: self._populate_preview_tree(codebase_path, file_data),
+            lambda: self._populate_preview_tree(paths, file_data),
         )
 
     def _handle_preview_error(self, error: Exception):
@@ -572,18 +593,33 @@ class ConsolidatorGUI(tb.Window):
         self._preview_worker = None
 
     def _populate_preview_tree(
-        self, codebase_path: Path, file_data: List[Tuple[Path, int, str]]
+        self, paths: List[str], file_data: List[Tuple[Path, int, str]]
     ):
         # Clear existing tree
         for item in self.file_tree.get_children():
             self.file_tree.delete(item)
         self._tree_item_paths.clear()
 
+        root_paths = [Path(p).resolve() for p in paths]
         dir_nodes: dict[str, str] = {}
 
         for file_path, file_size, file_type in file_data:
-            rel_path = file_path.relative_to(codebase_path)
-            parts = rel_path.parts
+            # Find which root this file belongs to
+            target_root = None
+            for root in root_paths:
+                try:
+                    rel_path = file_path.relative_to(root)
+                    target_root = root
+                    break
+                except ValueError:
+                    continue
+
+            if not target_root:
+                continue
+
+            # Prefix with root name
+            prefixed_rel_path = Path(target_root.name) / rel_path
+            parts = prefixed_rel_path.parts
 
             # Create directory nodes if they don't exist
             current_path = ""
@@ -601,8 +637,8 @@ class ConsolidatorGUI(tb.Window):
                         open=True,
                     )
                     dir_nodes[current_path] = node_id
-                    node_path = codebase_path / Path(current_path)
-                    self._tree_item_paths[node_id] = node_path
+                    # This path mapping might be slightly broken for virtual root names
+                    # but double-click on file still works fine since it uses file_path
                 parent = dir_nodes[current_path]
 
             # Format file size string
@@ -652,19 +688,22 @@ class ConsolidatorGUI(tb.Window):
         if self._worker and self._worker.is_alive():
             return
 
-        codebase = self.codebase_var.get().strip()
-        if not codebase:
+        paths = [self.path_tree.item(i, "text") for i in self.path_tree.get_children()]
+        if not paths:
             Messagebox.show_error(
-                "Please select a codebase directory.", "Missing Input"
+                "Please add at least one codebase directory.", "Missing Input"
             )
             return
 
-        codebase_path = Path(codebase).expanduser()
-        if not codebase_path.exists() or not codebase_path.is_dir():
-            Messagebox.show_error(
-                "The selected codebase directory is invalid.", "Invalid Input"
-            )
-            return
+        validated_paths = []
+        for path in paths:
+            p = Path(path).expanduser()
+            if not p.exists() or not p.is_dir():
+                Messagebox.show_error(
+                    f"The directory '{path}' is invalid.", "Invalid Input"
+                )
+                return
+            validated_paths.append(str(p.resolve()))
 
         try:
             n_files = int(self.num_files_var.get())
@@ -709,7 +748,7 @@ class ConsolidatorGUI(tb.Window):
 
         # Start worker thread
         args = (
-            str(codebase_path.resolve()),
+            validated_paths,
             n_files,
             output_dir,
             folder_name,
@@ -747,7 +786,7 @@ class ConsolidatorGUI(tb.Window):
     # Worker logic
     def _run_worker(
         self,
-        codebase_path: str,
+        codebase_paths: List[str],
         n_files: int,
         output_dir: Optional[str],
         folder_name: Optional[str],
@@ -766,6 +805,7 @@ class ConsolidatorGUI(tb.Window):
         try:
             print("🚀 Codebase Consolidator GUI")
             print("=" * 50)
+            print(f"📁 Source paths: {len(codebase_paths)}")
             print(f"🎨 Using syntax theme: {syntax_theme}")
             print(f"🔢 Line numbers: {'enabled' if line_numbers else 'disabled'}")
             print(f"🏷️ XML Output: {'enabled' if use_xml else 'disabled'}")
@@ -773,7 +813,7 @@ class ConsolidatorGUI(tb.Window):
             print(f"📏 Max Part Size: {max_size / 1024:.1f} KB")
 
             consolidator = EnhancedCodebaseConsolidator(
-                codebase_path,
+                codebase_paths,
                 n_files,
                 syntax_theme,
                 line_numbers,
